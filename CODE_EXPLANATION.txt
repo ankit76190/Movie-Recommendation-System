@@ -1,0 +1,1132 @@
+================================================================================
+   MOVIE RECOMMENDATION SYSTEM — COMPLETE CODE EXPLANATION
+================================================================================
+
+This file explains every single file, function, and line of logic in the
+project so you can fully understand, modify, and extend the code on your own.
+
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+  1. PROJECT OVERVIEW — How everything fits together
+  2. data_loader.py   — Downloading, loading, and preprocessing data
+  3. eda.py           — Exploratory Data Analysis and visualizations
+  4. recommender.py   — The three recommendation algorithms
+  5. evaluation.py    — Metrics and hyper-parameter tuning
+  6. main.py          — The pipeline that runs everything
+  7. HOW TO MODIFY    — Common changes you might want to make
+
+
+================================================================================
+1. PROJECT OVERVIEW — HOW EVERYTHING FITS TOGETHER
+================================================================================
+
+The project is a movie recommendation system. It takes a dataset of 100,000
+movie ratings given by 943 users across 1,682 movies, and uses that data to
+predict what movies a user might enjoy.
+
+FLOW OF EXECUTION (when you run "python main.py"):
+
+  main.py
+    |
+    +--> data_loader.py     Downloads the MovieLens dataset, loads it into
+    |                       Pandas DataFrames, cleans missing values.
+    |
+    +--> eda.py             Prints summary statistics and creates 7 charts
+    |                       showing patterns in the data (saved to figures/).
+    |
+    +--> recommender.py     Builds 3 recommendation engines:
+    |    |                    1) Content-Based (genre similarity)
+    |    |                    2) User-Based Collaborative Filtering
+    |    |                    3) SVD Matrix Factorization
+    |    |
+    |    +--> Generates top-10 movie recommendations for a demo user.
+    |
+    +--> evaluation.py      Measures how good the recommendations are using
+    |                       metrics like RMSE, MAE, Precision, Recall, NDCG.
+    |
+    +--> evaluation.py      Searches for the best hyper-parameters (n_factors).
+
+KEY CONCEPT — What is a "Recommendation System"?
+
+  A recommendation system predicts what items (movies) a user will like,
+  based on past behavior. There are two main approaches:
+
+  a) Content-Based: "You liked Action movies, so here are more Action movies."
+     Looks at the FEATURES of items the user liked.
+
+  b) Collaborative Filtering: "Users similar to you liked Movie X, so you
+     might too." Looks at patterns across ALL users' ratings.
+
+
+================================================================================
+2. data_loader.py — LINE-BY-LINE EXPLANATION
+================================================================================
+
+PURPOSE: Downloads the MovieLens 100K dataset from the internet, loads it
+         into Pandas DataFrames, and cleans/preprocesses the data.
+
+------------------------------------------------------------------------
+IMPORTS
+------------------------------------------------------------------------
+
+  import os                  # File/folder path operations
+  import zipfile             # To unzip the downloaded dataset
+  import urllib.request      # To download files from the internet
+  import pandas as pd        # Data manipulation library (DataFrames)
+  import numpy as np         # Numerical operations (arrays, math)
+
+------------------------------------------------------------------------
+CONSTANTS (lines 19-22)
+------------------------------------------------------------------------
+
+  DATASET_URL  = "https://files.grouplens.org/datasets/movielens/ml-100k.zip"
+    ^ The URL where the dataset zip file lives on the internet.
+
+  DATA_DIR     = os.path.join(os.path.dirname(__file__), "data")
+    ^ Creates a path like "C:\...\Movie Recommendation System\data"
+    ^ os.path.dirname(__file__) = the folder where data_loader.py is.
+    ^ os.path.join() joins folder parts with the right separator (\ on Windows).
+
+  ZIP_PATH     = os.path.join(DATA_DIR, "ml-100k.zip")
+    ^ Where the zip file will be saved temporarily.
+
+  EXTRACT_DIR  = os.path.join(DATA_DIR, "ml-100k")
+    ^ Where the unzipped files will live.
+
+------------------------------------------------------------------------
+FUNCTION: download_dataset()
+------------------------------------------------------------------------
+
+  def download_dataset():
+      os.makedirs(DATA_DIR, exist_ok=True)
+        ^ Create the "data" folder if it doesn't exist.
+        ^ exist_ok=True means "don't crash if it already exists."
+
+      if os.path.isdir(EXTRACT_DIR):
+          print("Dataset already exists. Skipping download.")
+          return
+        ^ If we already downloaded and extracted before, skip it.
+
+      urllib.request.urlretrieve(DATASET_URL, ZIP_PATH)
+        ^ Download the file from the URL and save it to ZIP_PATH.
+
+      with zipfile.ZipFile(ZIP_PATH, "r") as zf:
+          zf.extractall(DATA_DIR)
+        ^ Open the zip file and extract all contents into DATA_DIR.
+        ^ "with" ensures the file is properly closed after extraction.
+
+      os.remove(ZIP_PATH)
+        ^ Delete the zip file since we already extracted it.
+
+------------------------------------------------------------------------
+FUNCTION: load_ratings()
+------------------------------------------------------------------------
+
+  PURPOSE: Load the "u.data" file which contains all 100,000 ratings.
+
+  The file format is tab-separated with columns:
+    user_id    movie_id    rating    timestamp
+
+  ratings = pd.read_csv(
+      path,
+      sep="\t",            # Tab-separated values
+      names=["user_id", "movie_id", "rating", "timestamp"],
+                           # Column names (the file has no header row)
+      encoding="latin-1",  # Character encoding for the file
+  )
+
+  ratings["timestamp"] = pd.to_datetime(ratings["timestamp"], unit="s")
+    ^ The timestamp in the file is a Unix timestamp (seconds since 1970).
+    ^ This converts it to a readable date like "1998-01-05 10:30:00".
+
+  Returns: A DataFrame with columns [user_id, movie_id, rating, timestamp]
+           and 100,000 rows.
+
+------------------------------------------------------------------------
+FUNCTION: load_movies()
+------------------------------------------------------------------------
+
+  PURPOSE: Load the "u.item" file which contains movie information.
+
+  The file is pipe-separated (|) with 24 columns:
+    movie_id | title | release_date | video_release_date | imdb_url |
+    unknown | Action | Adventure | ... | Western
+
+  The last 19 columns are BINARY GENRE FLAGS (0 or 1).
+  For example, "Toy Story" has: Animation=1, Children=1, Comedy=1, rest=0.
+
+  genre_cols = ["unknown", "Action", "Adventure", ...]
+    ^ The 19 genre column names.
+
+  columns = ["movie_id", "title", "release_date", "video_release_date",
+             "imdb_url"] + genre_cols
+    ^ All 24 column names combined.
+
+  movies["release_date"] = pd.to_datetime(movies["release_date"], errors="coerce")
+    ^ Convert release_date strings to proper datetime objects.
+    ^ errors="coerce" means "if the date is invalid, set it to NaT (Not a Time)
+      instead of crashing."
+
+  movies.drop(columns=["video_release_date", "imdb_url"], inplace=True)
+    ^ Remove columns we don't need. inplace=True modifies the DataFrame
+      directly instead of returning a new one.
+
+------------------------------------------------------------------------
+FUNCTION: load_users()
+------------------------------------------------------------------------
+
+  PURPOSE: Load the "u.user" file with user demographics.
+
+  Format: user_id | age | gender | occupation | zip_code
+  Example: 1 | 24 | M | technician | 85711
+
+  Straightforward CSV loading, nothing special here.
+
+------------------------------------------------------------------------
+FUNCTION: preprocess_ratings(ratings)
+------------------------------------------------------------------------
+
+  PURPOSE: Clean the ratings data.
+
+  df = ratings.copy()
+    ^ ALWAYS work on a copy so we don't accidentally modify the original.
+
+  df.dropna(subset=["user_id", "movie_id", "rating"], inplace=True)
+    ^ Remove any rows where user_id, movie_id, or rating is missing (NaN).
+    ^ dropna = "drop rows that have Not-a-Number values."
+
+  df["user_id"] = df["user_id"].astype(int)
+    ^ Ensure user_id is an integer (not float like 1.0).
+
+  df["rating"] = df["rating"].astype(float)
+    ^ Ensure rating is a float for mathematical operations.
+
+------------------------------------------------------------------------
+FUNCTION: preprocess_movies(movies)
+------------------------------------------------------------------------
+
+  PURPOSE: Clean movie data and extract the year from the title.
+
+  df["year"] = df["title"].str.extract(r"\((\d{4})\)").astype(float)
+    ^ Uses a REGEX (regular expression) to pull out the 4-digit year
+      from titles like "Toy Story (1995)".
+    ^ \(      = literal opening parenthesis
+    ^ (\d{4}) = capture group of exactly 4 digits
+    ^ \)      = literal closing parenthesis
+    ^ Result: "Toy Story (1995)" → 1995.0
+
+  df["release_date"] = df["release_date"].fillna(
+      pd.to_datetime(df["year"], format="%Y", errors="coerce")
+  )
+    ^ If release_date is missing (NaT), fill it using the extracted year.
+
+------------------------------------------------------------------------
+FUNCTION: build_user_item_matrix(ratings)
+------------------------------------------------------------------------
+
+  PURPOSE: Create the USER-ITEM MATRIX — the core data structure for
+           collaborative filtering.
+
+  WHAT IS IT?
+  A big table where rows = users, columns = movies, values = ratings.
+
+    Example (simplified):
+                  Movie1  Movie2  Movie3  Movie4
+      User1         5       3       0       0
+      User2         0       0       4       1
+      User3         4       0       0       5
+
+    0 means "this user hasn't rated this movie."
+
+  matrix = ratings.pivot_table(
+      index="user_id",        # Rows are users
+      columns="movie_id",     # Columns are movies
+      values="rating",        # Cell values are ratings
+      fill_value=0            # Unrated movies get 0
+  )
+
+  The actual matrix is 943 rows × 1682 columns.
+  Most cells are 0 (93.7% sparsity — most users rated very few movies).
+
+------------------------------------------------------------------------
+FUNCTION: normalize_ratings(matrix)
+------------------------------------------------------------------------
+
+  PURPOSE: Mean-center the ratings to remove user bias.
+
+  WHY? Some users are "generous raters" (average rating = 4.5) while others
+  are "harsh raters" (average = 2.0). Mean-centering removes this bias so
+  we compare relative preferences, not absolute scores.
+
+  user_mean = matrix.replace(0, np.nan).mean(axis=1)
+    ^ Replace 0s with NaN (so unrated movies don't affect the average).
+    ^ Compute the mean of each row (each user's average rating).
+
+  normalized = matrix.sub(user_mean, axis=0).fillna(0)
+    ^ Subtract each user's mean from all their ratings.
+    ^ .sub(user_mean, axis=0) subtracts row-wise.
+    ^ fillna(0) puts 0 back for unrated movies.
+
+  Example:
+    User1 average = 4.0, rated Movie1=5 → normalized = 5-4 = +1 (above avg)
+    User1 average = 4.0, rated Movie2=3 → normalized = 3-4 = -1 (below avg)
+
+------------------------------------------------------------------------
+FUNCTION: load_all()
+------------------------------------------------------------------------
+
+  Convenience function that calls everything in order:
+    1. download_dataset()         — download if needed
+    2. preprocess_ratings(...)    — clean ratings
+    3. preprocess_movies(...)     — clean movies
+    4. load_users()               — load users
+  Returns: (ratings, movies, users) — three DataFrames.
+
+
+================================================================================
+3. eda.py — LINE-BY-LINE EXPLANATION
+================================================================================
+
+PURPOSE: Exploratory Data Analysis. Before building models, we need to
+         understand our data — its shape, patterns, and potential issues.
+
+------------------------------------------------------------------------
+SETUP
+------------------------------------------------------------------------
+
+  import matplotlib
+  matplotlib.use("Agg")
+    ^ "Agg" = Anti-Grain Geometry — a non-interactive rendering backend.
+    ^ This means plots are saved to files instead of opening windows.
+    ^ Necessary when running on servers or without a display.
+
+  FIGURES_DIR = os.path.join(os.path.dirname(__file__), "figures")
+  os.makedirs(FIGURES_DIR, exist_ok=True)
+    ^ Create a "figures" folder to store all generated plot images.
+
+------------------------------------------------------------------------
+FUNCTION: dataset_summary(ratings, movies, users)
+------------------------------------------------------------------------
+
+  Prints key statistics:
+    - Total ratings: 100,000
+    - Unique users: 943
+    - Unique movies: 1,682
+    - Rating range: 1.0 to 5.0
+    - Mean rating: 3.53 (users tend to rate positively)
+    - Sparsity: 93.7%
+
+  sparsity = 1 - len(ratings) / (n_users * n_movies)
+    ^ Sparsity = fraction of the user-item matrix that is EMPTY.
+    ^ 100,000 ratings out of 943×1682 = 1,586,126 possible = 6.3% filled.
+    ^ So 93.7% is empty. This is typical — most users rate very few movies.
+
+  WHY SPARSITY MATTERS: The more empty the matrix is, the harder it is to
+  find patterns. This is the fundamental challenge of recommendation systems.
+
+------------------------------------------------------------------------
+FUNCTION: plot_rating_distribution(ratings)
+------------------------------------------------------------------------
+
+  Creates a BAR CHART showing how many times each rating (1-5) appears.
+
+  ratings["rating"].value_counts().sort_index()
+    ^ Count how many ratings of each value exist.
+    ^ sort_index() ensures bars go 1, 2, 3, 4, 5 (not by count).
+
+  .plot(kind="bar", ax=ax, color="steelblue")
+    ^ Draw a bar chart with steel blue color.
+
+  INSIGHT: Rating 4 is the most common. Users tend to rate movies they
+  like (selection bias — you usually watch movies you expect to enjoy).
+
+------------------------------------------------------------------------
+FUNCTION: plot_ratings_per_user(ratings)
+------------------------------------------------------------------------
+
+  HISTOGRAM showing how many ratings each user has given.
+
+  user_counts = ratings.groupby("user_id").size()
+    ^ Group all ratings by user and count how many each user has.
+
+  ax.hist(user_counts, bins=50, ...)
+    ^ A histogram divides the data into 50 "bins" (ranges) and shows
+      how many users fall into each range.
+
+  ax.axvline(user_counts.mean(), ...)
+    ^ Draws a vertical dashed line at the mean (average ratings per user).
+
+  INSIGHT: Most users have rated 20-100 movies. A few "power users" have
+  rated 500+. This long-tailed distribution is very common.
+
+------------------------------------------------------------------------
+FUNCTION: plot_ratings_per_movie(ratings)
+------------------------------------------------------------------------
+
+  Same idea but for movies — how many ratings each movie received.
+
+  INSIGHT: A few popular movies (Star Wars, etc.) have hundreds of ratings.
+  Most movies have very few. This is the "popularity bias" — popular items
+  dominate the dataset.
+
+------------------------------------------------------------------------
+FUNCTION: plot_top_movies(ratings, movies, n=20)
+------------------------------------------------------------------------
+
+  HORIZONTAL BAR CHART of the 20 most-rated movies.
+
+  ratings.groupby("movie_id").agg(
+      count=("rating", "size"),        # How many ratings
+      mean_rating=("rating", "mean")   # Average rating
+  )
+    ^ For each movie, compute the count and mean of ratings.
+
+  .sort_values("count", ascending=False).head(n)
+    ^ Sort by count (most rated first), take top 20.
+
+  top.merge(movies[["movie_id", "title"]], ...)
+    ^ Join with the movies table to get the movie titles.
+
+  ax.barh(top["title"], top["count"], ...)
+    ^ barh = horizontal bar chart (titles are long, so horizontal is better).
+
+  ax.invert_yaxis()
+    ^ By default matplotlib puts the first item at the bottom.
+    ^ This flips it so #1 is at the top.
+
+------------------------------------------------------------------------
+FUNCTION: plot_genre_popularity(movies, ratings)
+------------------------------------------------------------------------
+
+  Shows which genres get the most total ratings.
+
+  merged = ratings.merge(movies[["movie_id"] + genre_cols], on="movie_id")
+    ^ JOIN the ratings with movie genre data (match on movie_id).
+
+  genre_counts = merged[genre_cols].sum().sort_values(ascending=True)
+    ^ For each genre column (binary 0/1), sum across all rated entries.
+    ^ A movie rated 500 times with Action=1 adds 500 to Action's count.
+
+  INSIGHT: Drama and Comedy dominate. Documentary and Film-Noir are rare.
+
+------------------------------------------------------------------------
+FUNCTION: plot_user_demographics(users)
+------------------------------------------------------------------------
+
+  Two subplots side by side:
+    Left:  Age histogram (most users are 20-35)
+    Right: Gender pie chart (typically ~75% male in MovieLens 100K)
+
+  fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    ^ Create a figure with 1 row, 2 columns of subplots.
+
+  axes[1].pie(gender_counts, ..., autopct="%1.1f%%")
+    ^ autopct adds percentage labels like "73.6%" on the pie slices.
+
+------------------------------------------------------------------------
+FUNCTION: plot_rating_heatmap(ratings)
+------------------------------------------------------------------------
+
+  HEATMAP of a 50×50 sample of the user-item matrix.
+
+  sample = matrix.iloc[:50, :50]
+    ^ Take the first 50 users and first 50 movies.
+
+  sns.heatmap(sample, cmap="YlOrRd", ...)
+    ^ seaborn draws a color-coded grid.
+    ^ YlOrRd = Yellow-Orange-Red color scale.
+    ^ Dark cells = high ratings, white/light = 0 (unrated).
+
+  INSIGHT: The heatmap is mostly white/light — visually shows sparsity.
+  Clusters of colored cells show that some movies are more popular.
+
+------------------------------------------------------------------------
+FUNCTION: run_eda()
+------------------------------------------------------------------------
+
+  Convenience function that calls everything in order.
+  This is what main.py calls.
+
+
+================================================================================
+4. recommender.py — LINE-BY-LINE EXPLANATION
+================================================================================
+
+This is the CORE of the project. It implements three recommendation algorithms.
+
+========================================
+ALGORITHM 1: ContentBasedRecommender
+========================================
+
+CONCEPT: "If you liked Action movies, here are more Action movies."
+
+Each movie is represented as a VECTOR of 19 genre flags:
+  Star Wars = [0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0]
+                 ^Action ^Adventure              ^Sci-Fi
+
+Two movies are "similar" if their genre vectors point in the same direction.
+This is measured by COSINE SIMILARITY:
+
+  cosine_sim(A, B) = (A · B) / (|A| × |B|)
+
+  Where A · B = dot product (sum of element-wise products)
+  |A| = magnitude (length) of vector A
+
+  Range: 0 (completely different) to 1 (identical genres).
+
+------------------------------------------------------------------------
+__init__(self, movies, ratings)
+------------------------------------------------------------------------
+
+  self.movies = movies.copy()
+  self.ratings = ratings.copy()
+    ^ Store copies of the data (so original DataFrames aren't modified).
+
+  self._build_similarity_matrix()
+    ^ Precompute all pairwise movie similarities at initialization.
+
+------------------------------------------------------------------------
+_build_similarity_matrix(self)
+------------------------------------------------------------------------
+
+  genre_matrix = self.movies.set_index("movie_id")[self.GENRE_COLS].values
+    ^ Extract just the 19 genre columns as a NumPy array.
+    ^ Shape: (1682, 19) — 1682 movies, 19 genre features.
+
+  self.sim_matrix = cosine_similarity(genre_matrix)
+    ^ Computes cosine similarity between EVERY pair of movies.
+    ^ Result: (1682, 1682) matrix where sim_matrix[i][j] = similarity
+      between movie i and movie j.
+    ^ This is the most expensive operation — O(n² × 19) — but only done once.
+
+  self.movie_ids = self.movies["movie_id"].values
+    ^ Store the array of movie IDs for index lookups.
+
+------------------------------------------------------------------------
+_movie_idx(self, movie_id)
+------------------------------------------------------------------------
+
+  return np.where(self.movie_ids == movie_id)[0][0]
+    ^ np.where() finds the INDEX position of a movie_id in the array.
+    ^ Example: movie_id=50 (Star Wars) might be at index 49.
+
+------------------------------------------------------------------------
+similar_movies(self, movie_id, n=10)
+------------------------------------------------------------------------
+
+  PURPOSE: Given a movie, find the n most similar movies by genre.
+
+  idx = self._movie_idx(movie_id)
+    ^ Get the row index for this movie.
+
+  sim_scores = list(enumerate(self.sim_matrix[idx]))
+    ^ self.sim_matrix[idx] is a row of 1682 similarity scores.
+    ^ enumerate() pairs each score with its index: [(0, 0.8), (1, 0.3), ...]
+
+  sim_scores.sort(key=lambda x: x[1], reverse=True)
+    ^ Sort by similarity score, highest first.
+
+  sim_scores = sim_scores[1: n + 1]
+    ^ Skip index 0 (the movie itself, similarity=1.0), take next n.
+
+  RETURNS: DataFrame with movie_id, title, and similarity score.
+
+------------------------------------------------------------------------
+recommend(self, user_id, n=10)
+------------------------------------------------------------------------
+
+  PURPOSE: Recommend movies for a user based on what they've liked before.
+
+  ALGORITHM:
+    For each movie the user has rated:
+      Add (similarity_to_all_other_movies × user's_rating) to a score array.
+    Movies with high scores are similar to things the user rated highly.
+
+  user_ratings = self.ratings[self.ratings["user_id"] == user_id]
+    ^ Get all ratings by this user.
+
+  scores = np.zeros(len(self.movie_ids))
+    ^ Initialize a score array of zeros (one slot per movie).
+
+  for _, row in user_ratings.iterrows():
+    ^ Loop through each movie the user has rated.
+
+      idx = self._movie_idx(mid)
+      scores += self.sim_matrix[idx] * row["rating"]
+        ^ self.sim_matrix[idx] = similarity of this movie to ALL other movies.
+        ^ Multiply by the rating (higher rating = more weight).
+        ^ Add to the running total.
+
+  EXAMPLE:
+    User rated Star Wars = 5.
+    sim_matrix[Star Wars] = [0, 0.9 (Return of Jedi), 0.7 (Jurassic Park), ...]
+    scores += [0, 4.5, 3.5, ...] (multiplied by 5)
+
+    User also rated Toy Story = 3.
+    sim_matrix[Toy Story] = [0, 0.2, 0.1, 0.95 (Aladdin), ...]
+    scores += [0, 0.6, 0.3, 2.85, ...]
+
+    Final scores are the SUM across all rated movies.
+
+  for mid in watched:
+      scores[self._movie_idx(mid)] = 0
+    ^ Zero out movies the user has already seen (don't re-recommend them).
+
+  top_indices = np.argsort(scores)[::-1][:n]
+    ^ np.argsort() returns indices that would sort the array.
+    ^ [::-1] reverses to get descending order.
+    ^ [:n] takes the top n.
+
+
+========================================
+ALGORITHM 2: UserBasedCF
+========================================
+
+CONCEPT: "Users who rated movies similarly to you also liked Movie X."
+
+This is COLLABORATIVE FILTERING — it doesn't look at movie features,
+only at rating patterns across users.
+
+------------------------------------------------------------------------
+__init__(self, ratings, movies)
+------------------------------------------------------------------------
+
+  self.matrix = build_user_item_matrix(ratings)
+    ^ The 943×1682 user-item matrix (from data_loader.py).
+
+  self.normalized = normalize_ratings(self.matrix)
+    ^ Mean-centered version (each user's ratings shifted so their average=0).
+
+  self.user_sim = pd.DataFrame(
+      cosine_similarity(self.normalized), ...)
+    ^ Compute cosine similarity between ALL pairs of users.
+    ^ Input: 943 users, each represented as a 1682-dimensional vector.
+    ^ Output: 943×943 matrix where user_sim[i][j] = how similar user i is
+      to user j based on their rating patterns.
+
+  HOW USER SIMILARITY WORKS:
+    User A rated: Movie1=5, Movie2=3, Movie3=0
+    User B rated: Movie1=4, Movie2=4, Movie3=0
+    User C rated: Movie1=1, Movie2=5, Movie3=0
+
+    After mean-centering:
+    User A: [+1, -1, 0]    (mean=4, so 5→+1, 3→-1)
+    User B: [0, 0, 0]      (mean=4, so 4→0, 4→0)
+    User C: [-2, +2, 0]    (mean=3, so 1→-2, 5→+2)
+
+    cosine(A, B) = 0 (no clear pattern match)
+    cosine(A, C) = negative (opposite preferences!)
+
+------------------------------------------------------------------------
+similar_users(self, user_id, n=10)
+------------------------------------------------------------------------
+
+  self.user_sim[user_id].drop(user_id).sort_values(ascending=False).head(n)
+    ^ Get the similarity of this user to all others.
+    ^ Drop themselves (similarity to yourself = 1.0, not useful).
+    ^ Sort descending and return top n.
+
+------------------------------------------------------------------------
+recommend(self, user_id, n=10, k_neighbors=30)
+------------------------------------------------------------------------
+
+  PURPOSE: Predict ratings for all unseen movies, return top n.
+
+  ALGORITHM (Weighted k-NN):
+    1. Find the k most similar users (neighbors).
+    2. For each movie, compute a weighted average of neighbors' ratings,
+       where the weight = how similar that neighbor is.
+
+  neighbors = self.similar_users(user_id, n=k_neighbors)
+    ^ Get the 30 most similar users and their similarity scores.
+
+  neighbor_ratings = self.matrix.loc[neighbors.index]
+    ^ Get the actual ratings of those 30 neighbors.
+    ^ Shape: (30, 1682) — 30 users × all movies.
+
+  weights = neighbors.values.reshape(-1, 1)
+    ^ Similarity scores as a column vector. Shape: (30, 1).
+
+  mask = (neighbor_ratings != 0).astype(float)
+    ^ Binary mask: 1 where a neighbor actually rated a movie, 0 otherwise.
+    ^ We only want to consider neighbors who actually rated the movie.
+
+  weighted_sum = (neighbor_ratings.values * weights).sum(axis=0)
+    ^ Multiply each neighbor's ratings by their similarity weight.
+    ^ Sum across all neighbors (axis=0 = sum down the rows).
+    ^ Result: 1682-element array.
+
+  weight_total = (mask.values * np.abs(weights)).sum(axis=0)
+    ^ Sum of absolute weights for neighbors who actually rated each movie.
+    ^ This is the denominator for the weighted average.
+
+  predicted = np.where(weight_total > 0, weighted_sum / weight_total, 0)
+    ^ Weighted average: predicted_rating = weighted_sum / weight_total.
+    ^ If no neighbor rated the movie (weight_total=0), predict 0.
+
+  FORMAT OF THE PREDICTION:
+    For movie_id=100:
+      Neighbor1 (sim=0.9) rated it 5 → contributes 0.9 × 5 = 4.5
+      Neighbor2 (sim=0.7) rated it 4 → contributes 0.7 × 4 = 2.8
+      Neighbor3 (sim=0.3) didn't rate it → contributes nothing
+
+      predicted = (4.5 + 2.8) / (0.9 + 0.7) = 7.3 / 1.6 = 4.56
+
+  predicted_series[watched > 0] = 0
+    ^ Zero out already-rated movies.
+
+  top_ids = predicted_series.sort_values(ascending=False).head(n).index
+    ^ Get the movie_ids with the highest predicted ratings.
+
+
+========================================
+ALGORITHM 3: SVDRecommender
+========================================
+
+CONCEPT: Decompose the user-item matrix into hidden "factors" that explain
+why users like certain movies. Uses linear algebra (SVD = Singular Value
+Decomposition).
+
+INTUITION:
+  SVD discovers hidden patterns like:
+    - Factor 1 might capture "likes sci-fi vs romance"
+    - Factor 2 might capture "likes old classics vs new blockbusters"
+    - Factor 3 might capture "likes comedies vs dramas"
+
+  Each user gets a vector of factor scores (how much they care about each).
+  Each movie gets a vector of factor scores (how much it exhibits each).
+  Predicted rating = dot product of user factors × movie factors.
+
+MATH:
+  R ≈ U × Σ × Vᵀ
+
+  R = user-item matrix (943 × 1682)
+  U = user-factor matrix (943 × k)     — each user's factor preferences
+  Σ = diagonal matrix of singular values (k × k) — factor importances
+  Vᵀ = factor-movie matrix (k × 1682)  — each movie's factor loadings
+  k = number of factors (we use 50)
+
+  Reconstructed ratings = U × Σ × Vᵀ + user_means
+
+------------------------------------------------------------------------
+__init__(self, ratings, movies, n_factors=50)
+------------------------------------------------------------------------
+
+  self.n_factors = n_factors
+    ^ k = number of latent factors. More factors = more detail but slower
+      and risk of overfitting.
+
+  self.matrix = build_user_item_matrix(ratings)
+    ^ The 943×1682 user-item matrix.
+
+------------------------------------------------------------------------
+fit(self)
+------------------------------------------------------------------------
+
+  R = self.matrix.values.astype(float)
+    ^ Convert the DataFrame to a plain NumPy array.
+
+  # Compute per-user mean (only over rated items)
+  rated_mask = R != 0
+  counts = rated_mask.sum(axis=1)
+    ^ For each user, count how many movies they rated.
+
+  counts[counts == 0] = 1
+    ^ Prevent division by zero for users with no ratings.
+
+  self.user_means = R.sum(axis=1) / counts
+    ^ Average rating for each user (ignoring zeros).
+
+  R_centered = R.copy()
+  for i in range(R.shape[0]):
+      m = R[i] != 0
+      R_centered[i, m] -= self.user_means[i]
+    ^ Subtract each user's mean from their rated movies only.
+    ^ Unrated movies (0) stay as 0, not as negative values.
+
+  k = min(self.n_factors, min(R_centered.shape) - 1)
+    ^ SVD requires k < min(rows, cols). This ensures we don't ask for
+      more factors than the matrix dimension allows.
+
+  U, sigma, Vt = svds(R_centered, k=k)
+    ^ scipy.sparse.linalg.svds performs TRUNCATED SVD.
+    ^ "Truncated" = only compute the top k factors (not all 943).
+    ^ This is efficient — O(n×m×k) instead of O(n×m×min(n,m)).
+
+    ^ U shape: (943, 50)   — user factor matrix
+    ^ sigma shape: (50,)    — singular values (importance of each factor)
+    ^ Vt shape: (50, 1682)  — movie factor matrix (transposed)
+
+  predicted = U @ np.diag(sigma) @ Vt + self.user_means.reshape(-1, 1)
+    ^ Reconstruct the full predicted rating matrix.
+    ^ @ is matrix multiplication.
+    ^ np.diag(sigma) converts the 1D array into a 50×50 diagonal matrix.
+    ^ + user_means adds back each user's average (since we subtracted it).
+    ^ Result shape: (943, 1682) — predicted rating for EVERY user-movie pair.
+
+  self.predicted_df = pd.DataFrame(predicted, ...)
+    ^ Store as a DataFrame with user_id index and movie_id columns.
+
+------------------------------------------------------------------------
+predict(self, user_id, movie_id)
+------------------------------------------------------------------------
+
+  return float(np.clip(self.predicted_df.loc[user_id, movie_id], 1, 5))
+    ^ Look up the predicted rating.
+    ^ np.clip(..., 1, 5) ensures the prediction stays in the valid range.
+
+------------------------------------------------------------------------
+recommend(self, user_id, n=10)
+------------------------------------------------------------------------
+
+  preds = self.predicted_df.loc[user_id].copy()
+    ^ Get all predicted ratings for this user (1682 values).
+
+  preds[already_rated != 0] = -np.inf
+    ^ Set already-rated movies to negative infinity so they sort to the bottom.
+
+  top = preds.sort_values(ascending=False).head(n)
+    ^ Sort by predicted rating (descending), take top 10.
+
+------------------------------------------------------------------------
+evaluate(self, test_size=0.2, seed=42)
+------------------------------------------------------------------------
+
+  PURPOSE: Measure how accurate the SVD predictions are.
+
+  APPROACH: Hold-out evaluation.
+    1. Randomly hide 20% of ratings (the "test set").
+    2. Train SVD on the remaining 80% (the "training set").
+    3. Predict the hidden ratings and compare to actual values.
+
+  rng = np.random.RandomState(seed)
+    ^ Create a random number generator with a fixed seed.
+    ^ seed=42 ensures the same split every time (reproducibility).
+
+  mask = rng.rand(len(df)) < test_size
+    ^ Generate a random number 0-1 for each rating.
+    ^ If < 0.2, it goes to the test set. ~20% of ratings.
+
+  The rest of the function repeats the SVD training (on training data only)
+  and computes:
+
+  RMSE = √(mean of (actual - predicted)²)
+    ^ Lower is better. Penalizes large errors more than small ones.
+
+  MAE = mean of |actual - predicted|
+    ^ Lower is better. Treats all error sizes equally.
+
+
+================================================================================
+5. evaluation.py — LINE-BY-LINE EXPLANATION
+================================================================================
+
+PURPOSE: Comprehensive evaluation of the recommendation system using
+multiple metrics, plus hyper-parameter optimization.
+
+------------------------------------------------------------------------
+FUNCTION: _train_test_svd(ratings, n_factors, test_size, seed)
+------------------------------------------------------------------------
+
+  Same logic as SVDRecommender.evaluate() but returns the test_df and
+  pred_df for use by multiple metrics. This avoids retraining SVD
+  separately for each metric.
+
+  full_matrix = build_user_item_matrix(ratings)
+    ^ Build with ALL ratings to know the full shape (all user/movie IDs).
+
+  train_matrix = train_matrix.reindex(
+      index=full_matrix.index, columns=full_matrix.columns, fill_value=0)
+    ^ Ensure the training matrix has the same shape as the full matrix.
+    ^ Without this, some user/movie IDs from the test set wouldn't have
+      corresponding rows/columns.
+
+------------------------------------------------------------------------
+FUNCTION: compute_rmse_mae(test_df, pred_df)
+------------------------------------------------------------------------
+
+  Iterates over every test rating:
+    1. Look up the predicted rating from pred_df.
+    2. Clip to [1, 5] range.
+    3. Compute squared error and absolute error.
+
+  RMSE = sqrt(mean(squared_errors))
+  MAE  = mean(absolute_errors)
+
+------------------------------------------------------------------------
+FUNCTION: precision_recall_at_k(test_df, pred_df, k=10, threshold=3.5)
+------------------------------------------------------------------------
+
+  PRECISION@K: Of the top K recommended items, how many are actually relevant?
+  RECALL@K:    Of all relevant items, how many appear in the top K?
+
+  DEFINITIONS:
+    "Relevant" = the user's TRUE rating >= 3.5 (they actually liked it).
+    "Recommended" = the PREDICTED rating >= 3.5 (the system thinks they'd like it).
+
+  FOR EACH USER:
+    1. Get all test items and their true + predicted ratings.
+    2. Sort by predicted rating (descending).
+    3. Take top K items.
+    4. Count:
+       - n_relevant: total items with true_rating >= 3.5
+       - n_recommended: items in top-K with predicted_rating >= 3.5
+       - n_recommended_relevant: items in top-K with BOTH >= 3.5
+
+    precision = n_recommended_relevant / n_recommended
+      ^ "Of what we recommended, how much was actually good?"
+
+    recall = n_recommended_relevant / n_relevant
+      ^ "Of what was actually good, how much did we find?"
+
+  Return the AVERAGE across all users.
+
+  EXAMPLE:
+    Top-10 predictions: [Movie1=4.5, Movie2=4.2, Movie3=3.8, ..., Movie10=3.0]
+    True ratings:       [Movie1=5,   Movie2=2,   Movie3=4,   ..., Movie10=3]
+
+    Relevant (true>=3.5): Movie1(5), Movie3(4) = 2 items
+    Recommended & Relevant: Movie1 (pred=4.5>=3.5 AND true=5>=3.5) = 1 hit
+    Recommended: Movie1, Movie2, Movie3 (pred >= 3.5) = 3 items
+
+    Precision = 1/3 = 0.33
+    Recall = 1/2 = 0.50
+
+------------------------------------------------------------------------
+FUNCTION: ndcg_at_k(test_df, pred_df, k=10)
+------------------------------------------------------------------------
+
+  NDCG = Normalized Discounted Cumulative Gain.
+
+  CONCEPT: Not all recommendations are equal — the ORDER matters.
+  A relevant item at position 1 is much more valuable than at position 10,
+  because users look at top results first.
+
+  DCG = Σ (relevance_i / log2(i + 2))  for i = 0, 1, ..., k-1
+    ^ Each item's relevance (true rating) is divided by log(position).
+    ^ Items lower in the list get a bigger divisor (less credit).
+
+  IDCG = The IDEAL DCG — what you'd get if items were perfectly ranked.
+    ^ Sort by TRUE rating instead of predicted rating.
+
+  NDCG = DCG / IDCG
+    ^ Ranges from 0 to 1. 1.0 = perfect ranking.
+
+  EXAMPLE:
+    Our ranking (by prediction): [true=3, true=5, true=4]
+    DCG = 3/log2(2) + 5/log2(3) + 4/log2(4) = 3 + 3.15 + 2 = 8.15
+
+    Ideal ranking (by true):     [true=5, true=4, true=3]
+    IDCG = 5/log2(2) + 4/log2(3) + 3/log2(4) = 5 + 2.52 + 1.5 = 9.02
+
+    NDCG = 8.15 / 9.02 = 0.904
+
+------------------------------------------------------------------------
+FUNCTION: evaluate_svd(ratings, n_factors, test_size, k)
+------------------------------------------------------------------------
+
+  Runs the complete evaluation pipeline:
+    1. Train/test split and SVD training.
+    2. Compute RMSE and MAE.
+    3. Compute Precision@K and Recall@K.
+    4. Compute NDCG@K.
+    5. Print all results.
+
+------------------------------------------------------------------------
+FUNCTION: optimize_svd(ratings, test_size)
+------------------------------------------------------------------------
+
+  PURPOSE: Find the best value of n_factors (the number of latent factors).
+
+  candidates = [10, 20, 50, 100, 150]
+    ^ Try these different values.
+
+  For each candidate:
+    1. Train SVD with that n_factors.
+    2. Measure RMSE on the test set.
+    3. Track which gives the lowest RMSE.
+
+  Too few factors (10): Underfitting — can't capture enough patterns.
+  Too many factors (150): Overfitting — memorizes noise in the training data.
+  Sweet spot: Usually around 50-100 for this dataset.
+
+
+================================================================================
+6. main.py — LINE-BY-LINE EXPLANATION
+================================================================================
+
+PURPOSE: The master script that orchestrates everything.
+
+------------------------------------------------------------------------
+IMPORTS
+------------------------------------------------------------------------
+
+  from data_loader import load_all
+    ^ Function to download, load, and preprocess all data.
+
+  from eda import run_eda
+    ^ Function to generate all EDA plots and print summary.
+
+  from recommender import ContentBasedRecommender, UserBasedCF, SVDRecommender
+    ^ The three recommendation algorithm classes.
+
+  from evaluation import evaluate_svd, optimize_svd
+    ^ The evaluation and optimization functions.
+
+------------------------------------------------------------------------
+CONSTANT
+------------------------------------------------------------------------
+
+  DEMO_USER_ID = 1
+    ^ We demonstrate recommendations for User #1.
+    ^ CHANGE THIS to see recommendations for a different user (1 to 943).
+
+------------------------------------------------------------------------
+FLOW
+------------------------------------------------------------------------
+
+  STEP 1-3: load_all() + run_eda()
+    → Downloads data, cleans it, generates 7 plots.
+
+  STEP 4: ContentBasedRecommender
+    → Shows movies similar to Star Wars.
+    → Shows content-based recommendations for User 1.
+
+  STEP 5: UserBasedCF
+    → Shows the 5 most similar users to User 1.
+    → Shows collaborative filtering recommendations for User 1.
+
+  STEP 6: SVDRecommender
+    → Trains SVD model.
+    → Shows SVD recommendations for User 1.
+    → Evaluates with RMSE and MAE.
+
+  STEP 7-8: evaluate_svd()
+    → Full evaluation with all 5 metrics.
+
+  STEP 9: optimize_svd()
+    → Tests n_factors = [10, 20, 50, 100, 150].
+    → Retrains with the best and shows improved recommendations.
+    → Skip with: python main.py --skip-optimize
+
+  STEP 10: Print summary of the system design and limitations.
+
+------------------------------------------------------------------------
+COMMAND LINE OPTIONS
+------------------------------------------------------------------------
+
+  python main.py                → Runs everything (including grid search)
+  python main.py --skip-optimize → Skips the optimization step (faster)
+
+  if "--skip-optimize" in sys.argv:
+    ^ sys.argv is a list of command-line arguments.
+    ^ sys.argv[0] = "main.py", sys.argv[1] = "--skip-optimize", etc.
+
+
+================================================================================
+7. HOW TO MODIFY — COMMON CHANGES
+================================================================================
+
+------------------------------------------------------------------------
+A) CHANGE THE DEMO USER
+------------------------------------------------------------------------
+
+  In main.py, line 18:
+    DEMO_USER_ID = 1
+  Change to any number 1-943, e.g.:
+    DEMO_USER_ID = 42
+
+------------------------------------------------------------------------
+B) CHANGE THE NUMBER OF RECOMMENDATIONS
+------------------------------------------------------------------------
+
+  In main.py, every .recommend() call has n=10:
+    cb.recommend(DEMO_USER_ID, n=10)
+  Change to any number, e.g., n=20 for top 20.
+
+------------------------------------------------------------------------
+C) ADD A NEW SIMILARITY MEASURE
+------------------------------------------------------------------------
+
+  In recommender.py, the line:
+    self.user_sim = ... cosine_similarity(self.normalized) ...
+
+  You can replace cosine_similarity with:
+    from sklearn.metrics.pairwise import euclidean_distances
+    self.user_sim = 1 / (1 + euclidean_distances(self.normalized))
+      ^ Euclidean distance — smaller distance = more similar.
+      ^ 1/(1+d) converts distance to similarity (0 to 1 range).
+
+  Or Pearson correlation:
+    self.user_sim = pd.DataFrame(
+        np.corrcoef(self.normalized.values),
+        index=self.matrix.index,
+        columns=self.matrix.index,
+    )
+
+------------------------------------------------------------------------
+D) CHANGE SVD FACTORS
+------------------------------------------------------------------------
+
+  In main.py:
+    svd_rec = SVDRecommender(ratings, movies, n_factors=50)
+  Change n_factors to 10, 20, 100, 200, etc.
+  Lower = faster but less accurate. Higher = slower but captures more patterns.
+
+------------------------------------------------------------------------
+E) ADD MOVIE METADATA FEATURES (for better content-based)
+------------------------------------------------------------------------
+
+  In data_loader.py, preprocess_movies():
+    - Add more features beyond genres (e.g., decade, has_sequel, etc.)
+    - You'd need to create new columns in the movies DataFrame.
+
+  In recommender.py, ContentBasedRecommender:
+    - Add new columns to GENRE_COLS list.
+    - Or create a separate feature matrix.
+
+------------------------------------------------------------------------
+F) USE A DIFFERENT DATASET
+------------------------------------------------------------------------
+
+  The code is designed for MovieLens 100K format. To use a different dataset:
+
+  1. data_loader.py: Change the file paths and column definitions.
+  2. Make sure your data has these columns at minimum:
+     - Ratings: user_id, movie_id, rating
+     - Movies: movie_id, title, genre columns
+  3. Everything else (recommender, evaluation) works on DataFrames,
+     so it's dataset-agnostic.
+
+------------------------------------------------------------------------
+G) ADD ITEM-BASED COLLABORATIVE FILTERING
+------------------------------------------------------------------------
+
+  Instead of finding similar USERS, find similar ITEMS (movies).
+  In recommender.py, create a new class similar to UserBasedCF but:
+    - Transpose the matrix (items as rows instead of users).
+    - Compute item-item similarity.
+    - For a user, look at their rated items' most similar items.
+
+  This is often faster and more stable than user-based CF because the number
+  of items changes less frequently than the number of users.
+
+
+================================================================================
+END OF EXPLANATION
+================================================================================
+
+File structure summary:
+
+  data_loader.py   → DATA layer (download, load, clean, transform)
+  eda.py           → ANALYSIS layer (understand the data)
+  recommender.py   → MODEL layer (3 algorithms that generate recommendations)
+  evaluation.py    → EVALUATION layer (measure quality, optimize)
+  main.py          → ORCHESTRATION layer (runs everything in order)
+
+Run: python main.py
+Run (fast): python main.py --skip-optimize
+EDA only: python eda.py

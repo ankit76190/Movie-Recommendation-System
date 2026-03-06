@@ -1,0 +1,40 @@
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large datasets (comment out if you want to include)
+data/ml-100k/
+data/
+
+# Output files
+output.log
+*.log
+
+# Generated figures (can be regenerated)
+figures/
+
+# pytest
+.pytest_cache/
