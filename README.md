@@ -1,23 +1,179 @@
 # Movie Recommendation System
 
-A comprehensive movie recommendation system built as a **Data Science Minor Project** using the **MovieLens 100K** dataset. Implements three recommendation approaches: Content-Based Filtering, User-Based Collaborative Filtering, and SVD-based Matrix Factorization.
+A **production-grade** movie recommendation system with a Flask REST API backend, ReactJS frontend, SQLite database, and three recommendation algorithms (Content-Based, User-Based Collaborative Filtering, SVD Matrix Factorisation).
 
 ---
 
 ## Project Structure
 
 ```
-Movie Recommendation System/
-├── main.py              # Main entry point — runs full pipeline
+Movie-Recommendation-System/
+│
+├── backend/                    # Flask REST API
+│   ├── app.py                  # Application factory
+│   ├── config.py               # Dev / Test / Prod configuration
+│   ├── extensions.py           # SQLAlchemy + CORS instances
+│   ├── models.py               # ORM models: Movie, User, WatchlistEntry, Rating
+│   ├── routes/
+│   │   ├── movies.py           # GET/POST /api/movies, POST /api/movies/import
+│   │   ├── recommendations.py  # GET /api/recommendations/<user_id>
+│   │   ├── watchlist.py        # GET/POST/DELETE /api/watchlist/<username>
+│   │   └── export.py           # GET /api/export/watchlist/<username>
+│   ├── services/
+│   │   └── recommender_service.py  # Cached recommendation engine wrapper
+│   ├── seed.py                 # Populate DB with sample_movies.csv + demo users
+│   ├── test_api.py             # 37 unit tests for the REST API
+│   └── requirements.txt        # Python dependencies (Flask, SQLAlchemy, …)
+│
+├── frontend/                   # ReactJS single-page application
+│   ├── public/index.html
+│   ├── package.json
+│   └── src/
+│       ├── App.js              # Root component (tab navigation, user selector)
+│       ├── App.css             # Dark-mode styles
+│       ├── index.js            # React entry point
+│       ├── components/
+│       │   ├── MovieList.jsx       # Paginated, searchable movie browser
+│       │   ├── Recommendations.jsx # ML + genre-based recommendations
+│       │   ├── Watchlist.jsx       # Watchlist viewer + CSV export button
+│       │   └── ImportMovies.jsx    # Drag-and-drop CSV upload + manual add
+│       └── services/
+│           └── api.js              # Fetch-based API client
+│
+├── data/
+│   └── sample_movies.csv       # 110 sample movies for initial seeding
+│
+├── main.py              # CLI entry point — runs full ML pipeline
 ├── data_loader.py       # Dataset download, loading & preprocessing
 ├── eda.py               # Exploratory Data Analysis & visualizations
-├── recommender.py       # Recommendation engines (3 approaches)
-├── evaluation.py        # Metrics (RMSE, MAE, Precision@K, NDCG@K) & optimization
-├── requirements.txt     # Python dependencies
-├── README.md            # Project documentation (this file)
-├── data/                # Auto-created: MovieLens dataset (downloaded at runtime)
-└── figures/             # Auto-created: EDA visualizations
+├── recommender.py       # Recommendation engines (3 algorithms)
+├── evaluation.py        # Metrics (RMSE, MAE, Precision@K, NDCG@K) & optimisation
+├── test_recommender.py  # Unit tests for ML recommendation algorithms
+└── requirements.txt     # Root Python dependencies (for ML pipeline only)
 ```
+
+---
+
+## Quick Start
+
+### 1 — Backend
+
+```bash
+# Install backend dependencies
+pip install -r backend/requirements.txt
+
+# (Optional) Seed the database with sample movies and demo users
+cd backend
+python seed.py
+cd ..
+
+# Start the Flask development server (port 5000)
+cd backend
+python app.py
+```
+
+The API is now running at **http://localhost:5000**.
+
+### 2 — Frontend
+
+```bash
+cd frontend
+npm install
+npm start          # Opens http://localhost:3000
+```
+
+The React app proxies all `/api/*` calls to `localhost:5000`.
+
+### 3 — (Optional) Download the MovieLens Dataset for ML recommendations
+
+ML-powered recommendations (SVD, Collaborative Filtering, Content-Based) require the MovieLens 100K dataset. Download it once with:
+
+```bash
+python data_loader.py
+```
+
+The ~5 MB zip is extracted to `data/ml-100k/` automatically.  
+Genre-based recommendations work without the dataset.
+
+### 4 — Run the full ML pipeline (CLI)
+
+```bash
+pip install -r requirements.txt
+python main.py              # Full pipeline with hyper-parameter optimisation
+python main.py --skip-optimize   # Faster — skip grid search
+```
+
+---
+
+## API Reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | Health check |
+| GET | `/api/movies` | List movies (paginated, searchable) |
+| GET | `/api/movies/<id>` | Get a single movie |
+| POST | `/api/movies` | Create a movie (JSON body) |
+| POST | `/api/movies/import` | Bulk-import movies from CSV upload |
+| GET | `/api/movies/movielens` | Browse ML-100K catalogue (requires dataset) |
+| GET | `/api/users` | List all users |
+| POST | `/api/users` | Create a user |
+| GET | `/api/watchlist/<username>` | Get user's watchlist |
+| POST | `/api/watchlist/<username>` | Add movie to watchlist |
+| DELETE | `/api/watchlist/<username>/<movie_id>` | Remove movie from watchlist |
+| GET | `/api/export/watchlist/<username>` | **Download** watchlist as CSV |
+| GET | `/api/recommendations/<user_id>` | ML recommendations (`?method=svd\|collaborative\|content`) |
+| GET | `/api/recommendations/similar/<movie_id>` | Movies similar to a given movie |
+| GET | `/api/recommendations/genre` | Genre-based recommendations (`?genres=Action,Drama`) |
+
+### Query parameters
+
+- `?page=1&per_page=20` — Pagination (all list endpoints)
+- `?q=Matrix` — Title search (movie list)
+- `?method=svd&n=10` — Recommendation algorithm and result count
+
+---
+
+## Database Schema
+
+```
+movies          – id, movielens_id, title, year, genres, avg_rating, imdb_url
+users           – id, username, movielens_user_id, created_at
+watchlist       – id, user_id, movie_id, added_at, notes
+ratings         – id, user_id, movie_id, rating, rated_at
+```
+
+SQLite is used by default.  
+Set `DATABASE_URL=postgresql://...` in the environment to switch to PostgreSQL/MySQL.
+
+---
+
+## Running Tests
+
+```bash
+# Flask API tests (37 tests, no dataset required)
+cd backend
+python -m pytest test_api.py -v
+
+# ML recommendation engine tests (requires dataset download)
+python test_recommender.py
+```
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FLASK_ENV` | `development` | `development` / `testing` / `production` |
+| `SECRET_KEY` | `change-me-in-production` | Flask secret key |
+| `DATABASE_URL` | `sqlite:///movies_dev.db` | Database connection string |
+| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
+| `PORT` | `5000` | Backend server port |
+| `REACT_APP_API_URL` | `http://localhost:5000` | Frontend → API base URL |
+
+---
+
+## Dataset
 
 ## Dataset
 

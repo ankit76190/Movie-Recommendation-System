@@ -27,7 +27,19 @@ Thumbs.db
 
 # Large datasets (comment out if you want to include)
 data/ml-100k/
-data/
+
+# Keep sample data but ignore generated DB files
+*.db
+*.db-journal
+
+# Node / React
+frontend/node_modules/
+frontend/build/
+frontend/.env.local
+frontend/.env.production.local
+
+# Backend instance folder (SQLite DBs)
+backend/instance/
 
 # Output files
 output.log
